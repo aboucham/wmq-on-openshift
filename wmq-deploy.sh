@@ -25,15 +25,29 @@ oc adm policy add-scc-to-user anyuid -z default -n $PROJECT
 # 3. Apply the entire stack from GitHub
 oc apply -f $YAML_URL
 
-# 4. Wait for the pod
-echo "⏳ Waiting for IBM MQ to initialize..."
+# 4. Wait for the pod to be technically running
+echo "⏳ Waiting for MQ Pod to be scheduled..."
 oc rollout status deployment/wmq --timeout=120s
 
-# 5. Output the Console URL and Verify the Queue
+# 5. Wait for the Queue Manager process to actually start
+echo "⏳ Waiting for Queue Manager 'QMGR' to reach RUNNING state..."
+MAX_RETRIES=30
+COUNT=0
+while ! oc exec deployment/wmq -- dspmq | grep -q 'STATUS(Running)'; do
+    if [ $COUNT -eq $MAX_RETRIES ]; then
+        echo "❌ Timeout waiting for QMGR to start."
+        exit 1
+    fi
+    echo -n "."
+    sleep 2
+    ((COUNT++))
+done
+echo -e "\n✅ QMGR is officially Running!"
+
+# 6. Output the Console URL and Verify the Queue
 echo "------------------------------------------------"
 echo "Deployment Complete!"
-# Note: Ensure the route name in your YAML is 'mq-web-console'
-CONSOLE_URL=$(oc get route mq-web-console -o jsonpath='{.spec.host}' 2>/dev/null)
+CONSOLE_URL=$(oc get route mq-web-console -o jsonpath='{.spec.host}')
 echo "MQ Console: https://$CONSOLE_URL"
 echo "------------------------------------------------"
 
