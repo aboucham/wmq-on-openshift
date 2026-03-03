@@ -30,17 +30,22 @@ metadata:
   labels:
     app: wmq
 data:
-  # Automated MQSC Configuration
   setup.mqsc: |
-    * 1. RELAX SECURITY TO ALLOW 'app' IDENTITY WITHOUT OS USER
+    * ------------------------------------------------
+    * 1. RELAX SECURITY TO BYPASS OS USER CHECK
+    * ------------------------------------------------
     ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(OPTIONAL) CHCKLOCL(OPTIONAL)
     REFRESH SECURITY
     
+    * ------------------------------------------------
     * 2. DEFINE OBJECTS
+    * ------------------------------------------------
     DEFINE QLOCAL('IN.QUEUE') REPLACE
     DEFINE CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
     
+    * ------------------------------------------------
     * 3. AUTHORIZE 'app' IDENTITY
+    * ------------------------------------------------
     SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(MAP) MCAUSER('app') ACTION(REPLACE)
     SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALL)
     SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(ALL)
@@ -62,6 +67,7 @@ spec:
       labels:
         app: wmq
     spec:
+      # InitContainer now only handles volume permissions
       initContainers:
       - name: fix-permissions
         image: registry.access.redhat.com/ubi9/ubi-minimal:latest
