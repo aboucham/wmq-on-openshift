@@ -68,11 +68,13 @@ spec:
         - sh
         - -c
         - |
+          # 1. Install necessary shadow-utils for user management
           microdnf install -y shadow-utils
-          # Create user 'app' so the password can be verified by the OS
-          useradd -u 2000 -g 0 app || echo "User exists"
+          # 2. Create the user 'app' and set the password explicitly
+          # We use -o to allow non-unique UIDs if necessary and -g 0 to match OpenShift group
+          useradd -u 2000 -g 0 -m app || echo "User app already exists"
           echo "app:password" | chpasswd
-          # Fix volume permissions for MQ process
+          # 3. Ensure the MQ data directory is owned by the MQ user (1001)
           chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm
         securityContext:
           runAsUser: 0
