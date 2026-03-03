@@ -20,48 +20,40 @@ metadata:
     app: wmq
 type: Opaque
 stringData:
+  # 'alice' will use this password to connect
   MQ_ADMIN_PASSWORD: "password"
   MQ_APP_PASSWORD: "password"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mq-setup-script
+  name: custom-source-mqsc
   labels:
     app: wmq
 data:
-  setup.mqsc: |
-    * ------------------------------------------------
-    * 1. SECURITY & IDENTITY ADOPTION (IBM DOCS STYLE)
-    * ------------------------------------------------
-    * Use ADOPTCTX(YES) so MQ uses the 'alice' ID for all authorization
+  # This block is the EXACT implementation of the IBM Documentation setup
+  source.mqsc: |
+    * 1. CHANNEL DEFINITION
+    DEFINE CHANNEL(MYSVRCONN) CHLTYPE(SVRCONN) REPLACE
+
+    * 2. CHANNEL AUTHENTICATION RULES
+    SET CHLAUTH(MYSVRCONN) TYPE(BLOCKUSER) USERLIST('nobody') ACTION(REPLACE)
+    SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS) ACTION(REPLACE)
+    SET CHLAUTH(MYSVRCONN) TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) CHCKCLNT(REQUIRED) ACTION(REPLACE)
+
+    * 3. IDENTITY ADOPTION & AUTHENTICATION (OpenShift Fix included)
+    * ADOPTCTX(YES) ensures the 'alice' ID is used for authorization
     ALTER AUTHINFO(SYSTEM.DEFAULT.AUTHINFO.IDPWOS) AUTHTYPE(IDPWOS) ADOPTCTX(YES)
-    * RELAX OS CHECK: Required for OpenShift since 'alice' isn't in /etc/passwd
-    ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(OPTIONAL) CHCKLOCL(OPTIONAL)
+    * OpenShift Fix: Allow 'alice' identity even if OS user creation is restricted
+    ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(OPTIONAL)
     REFRESH SECURITY TYPE(CONNAUTH)
 
-    * ------------------------------------------------
-    * 2. CHANNEL & QUEUE DEFINITIONS
-    * ------------------------------------------------
-    DEFINE QLOCAL('MYQSOURCE') REPLACE
-    DEFINE CHANNEL('MYSVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
+    * 4. QUEUE DEFINITION
+    DEFINE QLOCAL(MYQSOURCE) REPLACE
 
-    * ------------------------------------------------
-    * 3. CHANNEL AUTHENTICATION (CHLAUTH)
-    * ------------------------------------------------
-    SET CHLAUTH('MYSVRCONN') TYPE(BLOCKUSER) USERLIST('nobody')
-    SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS)
-    SET CHLAUTH('MYSVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) CHCKCLNT(REQUIRED)
-    * Ensure the channel adopts 'alice' as the internal identity
-    ALTER CHANNEL('MYSVRCONN') CHLTYPE(SVRCONN) MCAUSER('alice')
-
-    * ------------------------------------------------
-    * 4. AUTHORIZATIONS (AUTHREC)
-    * ------------------------------------------------
-    * Authorize 'alice' to connect and inquire the Queue Manager
-    SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('alice') AUTHADD(CONNECT,INQ)
-    * Authorize 'alice' with ALLMQI for the source queue
-    SET AUTHREC PROFILE('MYQSOURCE') OBJTYPE(QUEUE) PRINCIPAL('alice') AUTHADD(ALLMQI)
+    * 5. AUTHORIZATIONS FOR ALICE
+    SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('alice') AUTHADD(CONNECT,INQ,DSP)
+    SET AUTHREC PROFILE(MYQSOURCE) OBJTYPE(QUEUE) PRINCIPAL('alice') AUTHADD(ALLMQI)
     
     REFRESH SECURITY
 ---
@@ -100,7 +92,7 @@ spec:
         - name: MQ_DEV
           value: "true"
         - name: MQ_QMGR_NAME
-          value: "QMGR"
+          value: "QM1"
         - name: MQ_ADMIN_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -109,26 +101,19 @@ spec:
         ports:
         - containerPort: 1414
           name: mq-port
-        - containerPort: 9443
-          name: mq-console
-        readinessProbe:
-          exec:
-            command: ["chkmqready"]
-          initialDelaySeconds: 20
-          periodSeconds: 5
         volumeMounts:
         - name: mq-data
           mountPath: /mnt/mqm
         - name: mqsc-scripts
-          mountPath: /etc/mqm/setup.mqsc
-          subPath: setup.mqsc
+          mountPath: /etc/mqm/source.mqsc
+          subPath: source.mqsc
       volumes:
       - name: mq-data
         persistentVolumeClaim:
           claimName: wmqdata
       - name: mqsc-scripts
         configMap:
-          name: mq-setup-script
+          name: custom-source-mqsc
 ---
 apiVersion: v1
 kind: Service
@@ -141,16 +126,3 @@ spec:
   - name: qm-port
     port: 1414
     targetPort: 1414
----
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: mq-web-console
-spec:
-  to:
-    kind: Service
-    name: wmq-service
-  port:
-    targetPort: qm-port
-  tls:
-    termination: edge
