@@ -32,40 +32,32 @@ metadata:
 data:
   setup.mqsc: |
     * ------------------------------------------------
-    * 1. SECURITY & IDENTITY ADOPTION (From IBM Docs)
+    * 1. IDENTITY ADOPTION (The Docs Fix)
     * ------------------------------------------------
-    * ADOPTCTX(YES) uses the provided 'app' user for all authorization
+    * ADOPTCTX(YES) ensures MQ adopts the 'app' ID for all subsequent authorization
     ALTER AUTHINFO(SYSTEM.DEFAULT.AUTHINFO.IDPWOS) AUTHTYPE(IDPWOS) ADOPTCTX(YES)
     * RELAX OS CHECK: Allow 'app' identity even if not in /etc/passwd
     ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(OPTIONAL) CHCKLOCL(OPTIONAL)
     REFRESH SECURITY TYPE(CONNAUTH)
 
     * ------------------------------------------------
-    * 2. CHANNEL & QUEUE DEFINITIONS
+    * 2. OBJECT DEFINITIONS
     * ------------------------------------------------
     DEFINE QLOCAL('IN.QUEUE') REPLACE
-    * State queue for Exactly-Once delivery (Required by Connector Docs)
-    DEFINE QLOCAL('QMGR.STATE.QUEUE') DEFSOPT(EXCL) REPLACE
-    
     DEFINE CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
-    * HBINT(30) allows faster rollbacks in failure scenarios
-    ALTER CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) HBINT(30) MCAUSER('app')
+    * Map the channel to the 'app' internal identity
+    ALTER CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) MCAUSER('app')
 
     * ------------------------------------------------
-    * 3. CHANNEL AUTHENTICATION (CHLAUTH)
+    * 3. CHANNEL AUTHENTICATION (REPLACE prevents startup errors)
     * ------------------------------------------------
-    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(BLOCKUSER) USERLIST('nobody')
-    SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS)
-    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) CHCKCLNT(REQUIRED)
+    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) ACTION(REPLACE)
 
     * ------------------------------------------------
-    * 4. AUTHORIZATIONS (AUTHREC)
+    * 4. EXPLICIT AUTHORIZATIONS (Principal must be 'app')
     * ------------------------------------------------
-    * Grant 'app' rights to Connect/Inquire the QMGR and put/get on Queues
-    SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(CONNECT,INQ)
-    SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALLMQI)
-    SET AUTHREC PROFILE('QMGR.STATE.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALLMQI)
-    
+    SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALL)
+    SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(ALL)
     REFRESH SECURITY
 ---
 apiVersion: apps/v1
