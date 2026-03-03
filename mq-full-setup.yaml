@@ -32,23 +32,40 @@ metadata:
 data:
   setup.mqsc: |
     * ------------------------------------------------
-    * 1. RELAX SECURITY TO BYPASS OS USER CHECK
+    * 1. SECURITY & IDENTITY ADOPTION (From IBM Docs)
     * ------------------------------------------------
+    * ADOPTCTX(YES) uses the provided 'app' user for all authorization
+    ALTER AUTHINFO(SYSTEM.DEFAULT.AUTHINFO.IDPWOS) AUTHTYPE(IDPWOS) ADOPTCTX(YES)
+    * RELAX OS CHECK: Allow 'app' identity even if not in /etc/passwd
     ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(OPTIONAL) CHCKLOCL(OPTIONAL)
-    REFRESH SECURITY
-    
+    REFRESH SECURITY TYPE(CONNAUTH)
+
     * ------------------------------------------------
-    * 2. DEFINE OBJECTS
+    * 2. CHANNEL & QUEUE DEFINITIONS
     * ------------------------------------------------
     DEFINE QLOCAL('IN.QUEUE') REPLACE
-    DEFINE CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
+    * State queue for Exactly-Once delivery (Required by Connector Docs)
+    DEFINE QLOCAL('QMGR.STATE.QUEUE') DEFSOPT(EXCL) REPLACE
     
+    DEFINE CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
+    * HBINT(30) allows faster rollbacks in failure scenarios
+    ALTER CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) HBINT(30) MCAUSER('app')
+
     * ------------------------------------------------
-    * 3. AUTHORIZE 'app' IDENTITY
+    * 3. CHANNEL AUTHENTICATION (CHLAUTH)
     * ------------------------------------------------
-    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(MAP) MCAUSER('app') ACTION(REPLACE)
-    SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALL)
-    SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(ALL)
+    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(BLOCKUSER) USERLIST('nobody')
+    SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS)
+    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) CHCKCLNT(REQUIRED)
+
+    * ------------------------------------------------
+    * 4. AUTHORIZATIONS (AUTHREC)
+    * ------------------------------------------------
+    * Grant 'app' rights to Connect/Inquire the QMGR and put/get on Queues
+    SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(CONNECT,INQ)
+    SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALLMQI)
+    SET AUTHREC PROFILE('QMGR.STATE.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALLMQI)
+    
     REFRESH SECURITY
 ---
 apiVersion: apps/v1
@@ -67,7 +84,6 @@ spec:
       labels:
         app: wmq
     spec:
-      # InitContainer now only handles volume permissions
       initContainers:
       - name: fix-permissions
         image: registry.access.redhat.com/ubi9/ubi-minimal:latest
@@ -147,4 +163,5 @@ spec:
   port:
     targetPort: console-port
   tls:
-    termination: passthrough
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
