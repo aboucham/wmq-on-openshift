@@ -75,7 +75,7 @@ spec:
         readinessProbe:
           exec:
             command: ["chkmqready"]
-          initialDelaySeconds: 10
+          initialDelaySeconds: 15
           periodSeconds: 5
         volumeMounts:
         - name: mq-data
