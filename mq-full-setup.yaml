@@ -30,19 +30,20 @@ metadata:
   labels:
     app: wmq
 data:
-  # This script runs automatically when the Queue Manager starts
+  # Automated MQSC Configuration
   setup.mqsc: |
-    * Create Queue
+    * 1. RELAX SECURITY TO ALLOW 'app' IDENTITY WITHOUT OS USER
+    ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(OPTIONAL) CHCKLOCL(OPTIONAL)
+    REFRESH SECURITY
+    
+    * 2. DEFINE OBJECTS
     DEFINE QLOCAL('IN.QUEUE') REPLACE
-    * Create Channel for Kafka Connector
     DEFINE CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
-    * Map Channel to the 'app' user
+    
+    * 3. AUTHORIZE 'app' IDENTITY
     SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(MAP) MCAUSER('app') ACTION(REPLACE)
-    * Grant Full Permissions to 'app'
     SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALL)
     SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(ALL)
-    SET AUTHREC PROFILE('ONEFINSURV.SVRCONN') OBJTYPE(CHANNEL) PRINCIPAL('app') AUTHADD(ALL)
-    * Refresh Security
     REFRESH SECURITY
 ---
 apiVersion: apps/v1
@@ -62,20 +63,9 @@ spec:
         app: wmq
     spec:
       initContainers:
-      - name: setup-os-identity
+      - name: fix-permissions
         image: registry.access.redhat.com/ubi9/ubi-minimal:latest
-        command: 
-        - sh
-        - -c
-        - |
-          # 1. Install necessary shadow-utils for user management
-          microdnf install -y shadow-utils
-          # 2. Create the user 'app' and set the password explicitly
-          # We use -o to allow non-unique UIDs if necessary and -g 0 to match OpenShift group
-          useradd -u 2000 -g 0 -m app || echo "User app already exists"
-          echo "app:password" | chpasswd
-          # 3. Ensure the MQ data directory is owned by the MQ user (1001)
-          chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm
+        command: ["sh", "-c", "chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm"]
         securityContext:
           runAsUser: 0
         volumeMounts:
