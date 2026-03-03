@@ -20,8 +20,8 @@ metadata:
     app: wmq
 type: Opaque
 stringData:
-  MQ_ADMIN_PASSWORD: "quick123+"
-  MQ_APP_PASSWORD: "quick123+"
+  MQ_ADMIN_PASSWORD: "password"
+  MQ_APP_PASSWORD: "password"
 ---
 apiVersion: apps/v1
 kind: Deployment
