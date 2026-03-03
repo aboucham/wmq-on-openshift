@@ -14,22 +14,19 @@ fi
 
 echo "🚀 Deploying IBM MQ Stack..."
 
-# 1. Grant SCC permissions for UID 1001 and InitContainer chown
+# 1. Grant SCC permissions for UID 1001 and InitContainer
 oc adm policy add-scc-to-user anyuid -z default -n $PROJECT
 
 # 2. Apply YAML from GitHub
 oc apply -f $YAML_URL
 
-# 3. Wait for Readiness Probe to pass
-echo "⏳ Waiting for MQ Container and Queue Manager to initialize..."
+# 3. Wait for Readiness Probe (chkmqready) to pass
+echo "⏳ Waiting for Queue Manager 'QMGR' to be ready..."
 oc rollout status deployment/wmq --timeout=150s
 
 # 4. Success Output
 echo "------------------------------------------------"
 echo "✅ Deployment Successful!"
 CONSOLE_URL=$(oc get route mq-web-console -o jsonpath='{.spec.host}')
-echo "MQ Console: https://$CONSOLE_URL"
+echo "MQ Console: https://$CONSOLE_URL/ibmmq/console/"
 echo "------------------------------------------------"
-echo "The Queue Manager is now running. You can create your queues"
-echo "via the Web Console or by running:"
-echo "oc exec deployment/wmq -- runmqsc QMGR"
