@@ -30,11 +30,17 @@ metadata:
   labels:
     app: wmq
 data:
+  # Added explicit comments and trailing newlines to satisfy the MQSC parser
   setup.mqsc: |
+    * ------------------------------------------------
+    * MQSC AUTOMATIC CONFIGURATION
+    * ------------------------------------------------
     DEFINE QLOCAL('IN.QUEUE') REPLACE
     SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) GROUP('app') AUTH(ALL)
     SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) GROUP('app') AUTH(ALL)
     REFRESH SECURITY
+    * EOF (Ensure a blank line follows)
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -52,7 +58,7 @@ spec:
       labels:
         app: wmq
     spec:
-      # Fixes the 'mkdir /mnt/mqm/data: permission denied' error
+      # Granting 'root' capability to this specific container via SCC is handled in the script
       initContainers:
       - name: fix-permissions
         image: busybox:latest
@@ -99,6 +105,7 @@ spec:
       - name: mqsc-scripts
         configMap:
           name: mq-setup-script
+          defaultMode: 0777
 ---
 apiVersion: v1
 kind: Service
