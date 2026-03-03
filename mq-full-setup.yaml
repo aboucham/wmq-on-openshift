@@ -23,6 +23,28 @@ stringData:
   MQ_ADMIN_PASSWORD: "password"
   MQ_APP_PASSWORD: "password"
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mq-setup-script
+  labels:
+    app: wmq
+data:
+  # This script runs automatically when the Queue Manager starts
+  setup.mqsc: |
+    * Create Queue
+    DEFINE QLOCAL('IN.QUEUE') REPLACE
+    * Create Channel for Kafka Connector
+    DEFINE CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
+    * Map Channel to the 'app' user
+    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(MAP) MCAUSER('app') ACTION(REPLACE)
+    * Grant Full Permissions to 'app'
+    SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALL)
+    SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(ALL)
+    SET AUTHREC PROFILE('ONEFINSURV.SVRCONN') OBJTYPE(CHANNEL) PRINCIPAL('app') AUTHADD(ALL)
+    * Refresh Security
+    REFRESH SECURITY
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,19 +62,18 @@ spec:
         app: wmq
     spec:
       initContainers:
-      - name: setup-os-users
+      - name: setup-os-identity
         image: registry.access.redhat.com/ubi9/ubi-minimal:latest
         command: 
         - sh
         - -c
         - |
-          # 1. Fix volume permissions
-          chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm
-          # 2. Add 'app' user to the OS so password 'password' can be verified
-          # We use microdnf to grab shadow-utils if not present
           microdnf install -y shadow-utils
+          # Create user 'app' so the password can be verified by the OS
           useradd -u 2000 -g 0 app || echo "User exists"
           echo "app:password" | chpasswd
+          # Fix volume permissions for MQ process
+          chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm
         securityContext:
           runAsUser: 0
         volumeMounts:
@@ -74,11 +95,6 @@ spec:
             secretKeyRef:
               name: mq-passwords
               key: MQ_ADMIN_PASSWORD
-        - name: MQ_APP_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mq-passwords
-              key: MQ_APP_PASSWORD
         ports:
         - containerPort: 1414
           name: mq-port
@@ -92,10 +108,16 @@ spec:
         volumeMounts:
         - name: mq-data
           mountPath: /mnt/mqm
+        - name: mqsc-scripts
+          mountPath: /etc/mqm/setup.mqsc
+          subPath: setup.mqsc
       volumes:
       - name: mq-data
         persistentVolumeClaim:
           claimName: wmqdata
+      - name: mqsc-scripts
+        configMap:
+          name: mq-setup-script
 ---
 apiVersion: v1
 kind: Service
