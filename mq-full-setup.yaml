@@ -3,6 +3,8 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: wmqdata
+  labels:
+    app: wmq
 spec:
   accessModes:
     - ReadWriteOnce
@@ -14,6 +16,8 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: mq-passwords
+  labels:
+    app: wmq
 type: Opaque
 stringData:
   MQ_ADMIN_PASSWORD: "quick123+"
@@ -23,22 +27,21 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: mq-setup-script
+  labels:
+    app: wmq
 data:
-  # Automated MQSC commands for 'app' group permissions
   setup.mqsc: |
     DEFINE QLOCAL('IN.QUEUE') REPLACE
-    
-    * Granting permissions to the 'app' group instead of 'mqm'
     SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) GROUP('app') AUTH(ALL)
     SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) GROUP('app') AUTH(ALL)
-    
-    * Refreshing security to apply changes immediately
     REFRESH SECURITY
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: wmq
+  labels:
+    app: wmq
 spec:
   replicas: 1
   selector:
@@ -49,6 +52,14 @@ spec:
       labels:
         app: wmq
     spec:
+      # Fixes the 'mkdir /mnt/mqm/data: permission denied' error
+      initContainers:
+      - name: fix-permissions
+        image: busybox:latest
+        command: ["sh", "-c", "chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm"]
+        volumeMounts:
+        - name: mq-data
+          mountPath: /mnt/mqm
       containers:
       - name: mq
         image: icr.io/ibm-messaging/mq:latest
@@ -93,6 +104,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: wmq-service
+  labels:
+    app: wmq
 spec:
   selector:
     app: wmq
@@ -108,6 +121,8 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: mq-web-console
+  labels:
+    app: wmq
 spec:
   to:
     kind: Service
