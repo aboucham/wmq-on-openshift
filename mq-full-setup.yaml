@@ -32,32 +32,37 @@ metadata:
 data:
   setup.mqsc: |
     * ------------------------------------------------
-    * 1. IDENTITY ADOPTION (The Docs Fix)
+    * 1. SECURITY & IDENTITY ADOPTION (IBM DOCS STYLE)
     * ------------------------------------------------
-    * ADOPTCTX(YES) ensures MQ adopts the 'app' ID for all subsequent authorization
+    * Use ADOPTCTX(YES) so MQ uses the 'alice' ID for all authorization
     ALTER AUTHINFO(SYSTEM.DEFAULT.AUTHINFO.IDPWOS) AUTHTYPE(IDPWOS) ADOPTCTX(YES)
-    * RELAX OS CHECK: Allow 'app' identity even if not in /etc/passwd
+    * RELAX OS CHECK: Required for OpenShift since 'alice' isn't in /etc/passwd
     ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(OPTIONAL) CHCKLOCL(OPTIONAL)
     REFRESH SECURITY TYPE(CONNAUTH)
 
     * ------------------------------------------------
-    * 2. OBJECT DEFINITIONS
+    * 2. CHANNEL & QUEUE DEFINITIONS
     * ------------------------------------------------
-    DEFINE QLOCAL('IN.QUEUE') REPLACE
-    DEFINE CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
-    * Map the channel to the 'app' internal identity
-    ALTER CHANNEL('ONEFINSURV.SVRCONN') CHLTYPE(SVRCONN) MCAUSER('app')
+    DEFINE QLOCAL('MYQSOURCE') REPLACE
+    DEFINE CHANNEL('MYSVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
 
     * ------------------------------------------------
-    * 3. CHANNEL AUTHENTICATION (REPLACE prevents startup errors)
+    * 3. CHANNEL AUTHENTICATION (CHLAUTH)
     * ------------------------------------------------
-    SET CHLAUTH('ONEFINSURV.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) ACTION(REPLACE)
+    SET CHLAUTH('MYSVRCONN') TYPE(BLOCKUSER) USERLIST('nobody')
+    SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS)
+    SET CHLAUTH('MYSVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) CHCKCLNT(REQUIRED)
+    * Ensure the channel adopts 'alice' as the internal identity
+    ALTER CHANNEL('MYSVRCONN') CHLTYPE(SVRCONN) MCAUSER('alice')
 
     * ------------------------------------------------
-    * 4. EXPLICIT AUTHORIZATIONS (Principal must be 'app')
+    * 4. AUTHORIZATIONS (AUTHREC)
     * ------------------------------------------------
-    SET AUTHREC PROFILE('IN.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(ALL)
-    SET AUTHREC PROFILE('QMGR') OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(ALL)
+    * Authorize 'alice' to connect and inquire the Queue Manager
+    SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('alice') AUTHADD(CONNECT,INQ)
+    * Authorize 'alice' with ALLMQI for the source queue
+    SET AUTHREC PROFILE('MYQSOURCE') OBJTYPE(QUEUE) PRINCIPAL('alice') AUTHADD(ALLMQI)
+    
     REFRESH SECURITY
 ---
 apiVersion: apps/v1
@@ -129,8 +134,6 @@ apiVersion: v1
 kind: Service
 metadata:
   name: wmq-service
-  labels:
-    app: wmq
 spec:
   selector:
     app: wmq
@@ -138,22 +141,16 @@ spec:
   - name: qm-port
     port: 1414
     targetPort: 1414
-  - name: console-port
-    port: 9443
-    targetPort: 9443
 ---
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: mq-web-console
-  labels:
-    app: wmq
 spec:
   to:
     kind: Service
     name: wmq-service
   port:
-    targetPort: console-port
+    targetPort: qm-port
   tls:
     termination: edge
-    insecureEdgeTerminationPolicy: Redirect
