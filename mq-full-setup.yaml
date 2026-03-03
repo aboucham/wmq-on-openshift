@@ -40,9 +40,19 @@ spec:
         app: wmq
     spec:
       initContainers:
-      - name: fix-permissions
-        image: busybox:latest
-        command: ["sh", "-c", "chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm"]
+      - name: fix-permissions-and-users
+        image: registry.access.redhat.com/ubi9/ubi:latest
+        command: 
+        - sh
+        - -c
+        - |
+          # 1. Fix volume permissions
+          chown -R 1001:0 /mnt/mqm && chmod -R 775 /mnt/mqm
+          # 2. Create the 'app' user and set password to 'password'
+          useradd -u 2000 app || echo "User already exists"
+          echo "app:password" | chpasswd
+        securityContext:
+          runAsUser: 0
         volumeMounts:
         - name: mq-data
           mountPath: /mnt/mqm
