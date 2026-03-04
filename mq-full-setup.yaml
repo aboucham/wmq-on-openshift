@@ -13,42 +13,30 @@ spec:
       storage: 2Gi
 ---
 apiVersion: v1
-kind: Secret
-metadata:
-  name: mq-passwords
-  labels:
-    app: wmq
-type: Opaque
-stringData:
-  # The Connector uses these, but MQ will map them to the internal 'mqm' user
-  MQ_ADMIN_PASSWORD: "password"
-  MQ_APP_PASSWORD: "password"
----
-apiVersion: v1
 kind: ConfigMap
 metadata:
   name: custom-source-mqsc
   labels:
     app: wmq
 data:
+  # This script disables all security gates for a seamless connection
   source.mqsc: |
-    * 1. RELAX SECURITY (Allows 'alice' to pass the initial gate)
-    ALTER AUTHINFO(SYSTEM.DEFAULT.AUTHINFO.IDPWOS) AUTHTYPE(IDPWOS) ADOPTCTX(YES) CHCKCLNT(OPTIONAL)
+    * 1. DISABLE CONNECTION AUTH (Stop checking OS passwords)
+    ALTER AUTHINFO(SYSTEM.DEFAULT.AUTHINFO.IDPWOS) AUTHTYPE(IDPWOS) CHCKCLNT(NONE)
+    ALTER AUTHINFO(DEV.AUTHINFO) AUTHTYPE(IDPWOS) CHCKCLNT(NONE)
     REFRESH SECURITY TYPE(CONNAUTH)
 
-    * 2. OBJECT DEFINITIONS
+    * 2. DISABLE CHANNEL AUTH (Stop checking IP/Client IDs)
+    ALTER QMGR CHLAUTH(DISABLED)
+
+    * 3. OBJECT DEFINITIONS
     DEFINE QLOCAL('MYQSOURCE') REPLACE
     DEFINE CHANNEL('MYSVRCONN') CHLTYPE(SVRCONN) TRPTYPE(TCP) REPLACE
+    * Map all incoming traffic on this channel to the admin user 'mqm'
+    ALTER CHANNEL('MYSVRCONN') CHLTYPE(SVRCONN) MCAUSER('mqm')
 
-    * 3. IDENTITY MAPPING (The Final Fix)
-    * This maps 'alice' to the OS-resident 'mqm' user (UID 1001)
-    SET CHLAUTH('MYSVRCONN') TYPE(BLOCKUSER) USERLIST('nobody') ACTION(REPLACE)
-    SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS) ACTION(REPLACE)
-    SET CHLAUTH('MYSVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(MAP) MCAUSER('mqm') CHCKCLNT(REQUIRED) ACTION(REPLACE)
-
-    * 4. AUTHORIZATIONS
-    * We authorize the adopted user 'mqm' to do the work
-    SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('mqm') AUTHADD(CONNECT,INQ,DSP)
+    * 4. PERMISSIONS (Ensuring 'mqm' has full authority)
+    SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('mqm') AUTHADD(ALL)
     SET AUTHREC PROFILE('MYQSOURCE') OBJTYPE(QUEUE) PRINCIPAL('mqm') AUTHADD(ALL)
     
     REFRESH SECURITY
@@ -89,14 +77,19 @@ spec:
           value: "true"
         - name: MQ_QMGR_NAME
           value: "QM1"
+        # Since we disabled auth, this is only used for the Web Console
         - name: MQ_ADMIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mq-passwords
-              key: MQ_ADMIN_PASSWORD
+          value: "password"
         ports:
         - containerPort: 1414
           name: mq-port
+        - containerPort: 9443
+          name: mq-console
+        readinessProbe:
+          exec:
+            command: ["chkmqready"]
+          initialDelaySeconds: 10
+          periodSeconds: 5
         volumeMounts:
         - name: mq-data
           mountPath: /mnt/mqm
@@ -122,3 +115,6 @@ spec:
   - name: qm-port
     port: 1414
     targetPort: 1414
+  - name: console-port
+    port: 9443
+    targetPort: 9443
